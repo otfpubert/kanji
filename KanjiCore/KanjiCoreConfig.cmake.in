@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find Qt6 dependencies
+find_dependency(Qt6 REQUIRED COMPONENTS Core Sql)
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/KanjiCoreTargets.cmake")
+
+check_required_components(KanjiCore) 
