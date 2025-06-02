@@ -32,6 +32,8 @@ set(CMAKE_AUTOMOC ON)
 add_library(KanjiCore SHARED
     kanji_database.cpp
     kanji_database.h
+    japanese_text_utils.cpp
+    japanese_text_utils.h
 )
 
 # Set library properties
@@ -73,7 +75,7 @@ install(TARGETS KanjiCore
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-install(FILES kanji_database.h
+install(FILES kanji_database.h japanese_text_utils.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 

@@ -11,6 +11,7 @@
 #include <QtWidgets/QProgressBar>
 #include <QMap>
 #include <QList>
+#include <QSet>
 #include <stdexcept>
 #include <exception>
 #include <kanji_database.h>
@@ -33,7 +34,7 @@ private slots:
     void onPreviousKanji();
     void onNextKanji();
     void onStartQuiz();
-    void onSubmitAnswer();
+    void onAnswerSubmitted();
     void onAnswerTextChanged(const QString &text);
     void onRetryQuestion();
 
@@ -54,8 +55,6 @@ private:
     void completeQuiz();
     void markKanjiAsLearned();
     void updateKanjiReviewProgress();
-    void initializeRomajiMap();
-    QString convertRomajiToHiragana(const QString &romaji);
     void showFeedbackOverlay(const QString &message, const QString &color);
 
     // Database and mode
@@ -95,12 +94,12 @@ private:
     int currentQuizIndex;
     QString correctAnswer;
     QList<bool> quizResults;
+    QSet<int> processedKanjiIds; // Track kanji that have been leveled up in review mode
     bool questionAnsweredCorrectly;
     int retryCount;
 
-    // Romaji conversion
-    QMap<QString, QString> romajiToHiragana;
-    bool isConverting;
+    // Conversion state
+    bool isConverting = false;
 
     enum class QuizType {
         Meaning,

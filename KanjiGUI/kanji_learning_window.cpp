@@ -1,9 +1,12 @@
 #include "kanji_learning_window.h"
+#include <japanese_text_utils.h>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QTimer>
 #include <QDebug>
 #include <QKeyEvent>
+#include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
 
 KanjiLearningWindow::KanjiLearningWindow(KanjiDatabase *db, Mode mode, QWidget *parent)
     : QMainWindow(parent), database(db), currentMode(mode), currentKanjiIndex(0), 
@@ -12,44 +15,49 @@ KanjiLearningWindow::KanjiLearningWindow(KanjiDatabase *db, Mode mode, QWidget *
 {
     try {
         setupUI();
-        initializeRomajiMap();
         
         if (currentMode == Mode::Learning) {
             loadKanjiForLearning();
-            setWindowTitle("Learn New Kanji");
-        } else {
+            if (!studyKanji.isEmpty()) {
+                displayCurrentKanji();
+                switchToStudyMode();
+            } else {
+                QMessageBox::information(this, "No New Kanji", "No new kanji available for learning.");
+            }
+        } else if (currentMode == Mode::Review) {
             loadKanjiForReview();
-            setWindowTitle("Review Kanji");
+            if (!studyKanji.isEmpty()) {
+                // For review mode, go directly to quiz - no need to study first
+                displayCurrentKanji();
+                
+                // Initialize quiz state
+                currentQuizIndex = 0;
+                quizResults.clear();
+                processedKanjiIds.clear(); // Clear tracking for review mode
+                for (int i = 0; i < studyKanji.size() * 2; ++i) {
+                    quizResults.append(false);
+                }
+                
+                switchToQuizMode();
+                startNextQuizQuestion();
+            } else {
+                QMessageBox::information(this, "No Reviews", "No kanji are due for review at this time.");
+            }
         }
         
-        if (studyKanji.isEmpty()) {
-            QString message = (currentMode == Mode::Learning) ? 
-                             "No new kanji available for learning." :
-                             "No kanji due for review.";
-            QMessageBox::information(this, "No Kanji Available", message);
-            close();
-            return;
-        }
+        connect(answerLineEdit, &QLineEdit::textChanged, this, &KanjiLearningWindow::onAnswerTextChanged);
         
-        displayCurrentKanji();
+        // Set focus to answer input
+        answerLineEdit->setFocus();
         
-        // For review mode, skip study interface and go straight to quiz
-        if (currentMode == Mode::Review) {
-            switchToQuizMode();
-            onStartQuiz(); // Start the quiz immediately for review mode
-        } else {
-            switchToStudyMode();
-        }
-    }
-    catch (const std::exception& e) {
-        QMessageBox::critical(this, "Initialization Error", 
-                             QString("Failed to initialize learning window: %1").arg(e.what()));
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, "Error", 
+            QString("Failed to initialize Kanji Learning Window: %1").arg(e.what()));
         qDebug() << "Exception in KanjiLearningWindow constructor:" << e.what();
         close();
-    }
-    catch (...) {
-        QMessageBox::critical(this, "Initialization Error", 
-                             "Unknown error occurred during window initialization");
+        
+    } catch (...) {
+        QMessageBox::critical(this, "Error", "Unknown error occurred while initializing Kanji Learning Window");
         qDebug() << "Unknown exception in KanjiLearningWindow constructor";
         close();
     }
@@ -286,226 +294,11 @@ void KanjiLearningWindow::createQuizInterface()
     retryButton->setVisible(false);
     layout->addWidget(retryButton);
     
-    connect(answerLineEdit, &QLineEdit::returnPressed, this, &KanjiLearningWindow::onSubmitAnswer);
+    connect(answerLineEdit, &QLineEdit::returnPressed, this, &KanjiLearningWindow::onAnswerSubmitted);
     connect(answerLineEdit, &QLineEdit::textChanged, this, &KanjiLearningWindow::onAnswerTextChanged);
     connect(retryButton, &QPushButton::clicked, this, &KanjiLearningWindow::onRetryQuestion);
     
     mainLayout->addWidget(quizWidget);
-}
-
-void KanjiLearningWindow::initializeRomajiMap()
-{
-    // Basic mappings - require double letters for single vowels
-    romajiToHiragana["AA"] = "あ";
-    romajiToHiragana["II"] = "い";
-    romajiToHiragana["UU"] = "う";
-    romajiToHiragana["EE"] = "え";
-    romajiToHiragana["OO"] = "お";
-    romajiToHiragana["NN"] = "ん";
-    
-    // Small characters
-    romajiToHiragana["XYA"] = "ゃ";  // Small ya
-    romajiToHiragana["XYU"] = "ゅ";  // Small yu
-    romajiToHiragana["XYO"] = "ょ";  // Small yo
-    romajiToHiragana["XTSU"] = "っ"; // Small tsu
-    romajiToHiragana["XA"] = "ぁ";   // Small a
-    romajiToHiragana["XI"] = "ぃ";   // Small i
-    romajiToHiragana["XU"] = "ぅ";   // Small u
-    romajiToHiragana["XE"] = "ぇ";   // Small e
-    romajiToHiragana["XO"] = "ぉ";   // Small o
-    
-    // K sounds
-    romajiToHiragana["KA"] = "か";
-    romajiToHiragana["KI"] = "き";
-    romajiToHiragana["KU"] = "く";
-    romajiToHiragana["KE"] = "け";
-    romajiToHiragana["KO"] = "こ";
-    
-    // G sounds (dakuten)
-    romajiToHiragana["GA"] = "が";
-    romajiToHiragana["GI"] = "ぎ";
-    romajiToHiragana["GU"] = "ぐ";
-    romajiToHiragana["GE"] = "げ";
-    romajiToHiragana["GO"] = "ご";
-    
-    // S sounds
-    romajiToHiragana["SA"] = "さ";
-    romajiToHiragana["SHI"] = "し";
-    romajiToHiragana["SU"] = "す";
-    romajiToHiragana["SE"] = "せ";
-    romajiToHiragana["SO"] = "そ";
-    
-    // Z sounds (dakuten)
-    romajiToHiragana["ZA"] = "ざ";
-    romajiToHiragana["JI"] = "じ";   // JI = じ
-    romajiToHiragana["ZI"] = "じ";   // Alternative
-    romajiToHiragana["ZU"] = "ず";
-    romajiToHiragana["ZE"] = "ぜ";
-    romajiToHiragana["ZO"] = "ぞ";
-    
-    // T sounds
-    romajiToHiragana["TA"] = "た";
-    romajiToHiragana["CHI"] = "ち";
-    romajiToHiragana["TSU"] = "つ";
-    romajiToHiragana["TE"] = "て";
-    romajiToHiragana["TO"] = "と";
-    
-    // D sounds (dakuten)
-    romajiToHiragana["DA"] = "だ";
-    romajiToHiragana["DI"] = "ぢ";
-    romajiToHiragana["DU"] = "づ";
-    romajiToHiragana["DE"] = "で";
-    romajiToHiragana["DO"] = "ど";
-    
-    // N sounds
-    romajiToHiragana["NA"] = "な";
-    romajiToHiragana["NI"] = "に";
-    romajiToHiragana["NU"] = "ぬ";
-    romajiToHiragana["NE"] = "ね";
-    romajiToHiragana["NO"] = "の";
-    
-    // H sounds
-    romajiToHiragana["HA"] = "は";
-    romajiToHiragana["HI"] = "ひ";
-    romajiToHiragana["FU"] = "ふ";
-    romajiToHiragana["HE"] = "へ";
-    romajiToHiragana["HO"] = "ほ";
-    
-    // B sounds (dakuten)
-    romajiToHiragana["BA"] = "ば";
-    romajiToHiragana["BI"] = "び";
-    romajiToHiragana["BU"] = "ぶ";
-    romajiToHiragana["BE"] = "べ";
-    romajiToHiragana["BO"] = "ぼ";
-    
-    // P sounds (handakuten)
-    romajiToHiragana["PA"] = "ぱ";
-    romajiToHiragana["PI"] = "ぴ";
-    romajiToHiragana["PU"] = "ぷ";
-    romajiToHiragana["PE"] = "ぺ";
-    romajiToHiragana["PO"] = "ぽ";
-    
-    // M sounds
-    romajiToHiragana["MA"] = "ま";
-    romajiToHiragana["MI"] = "み";
-    romajiToHiragana["MU"] = "む";
-    romajiToHiragana["ME"] = "め";
-    romajiToHiragana["MO"] = "も";
-    
-    // Y sounds
-    romajiToHiragana["YA"] = "や";
-    romajiToHiragana["YU"] = "ゆ";
-    romajiToHiragana["YO"] = "よ";
-    
-    // R sounds
-    romajiToHiragana["RA"] = "ら";
-    romajiToHiragana["RI"] = "り";
-    romajiToHiragana["RU"] = "る";
-    romajiToHiragana["RE"] = "れ";
-    romajiToHiragana["RO"] = "ろ";
-    
-    // W sounds
-    romajiToHiragana["WA"] = "わ";
-    romajiToHiragana["WI"] = "ゐ";   // Archaic
-    romajiToHiragana["WE"] = "ゑ";   // Archaic
-    romajiToHiragana["WO"] = "を";
-    
-    // Combination sounds with Y (3 characters)
-    romajiToHiragana["KYA"] = "きゃ";
-    romajiToHiragana["KYU"] = "きゅ";
-    romajiToHiragana["KYO"] = "きょ";
-    
-    romajiToHiragana["GYA"] = "ぎゃ";
-    romajiToHiragana["GYU"] = "ぎゅ";
-    romajiToHiragana["GYO"] = "ぎょ";
-    
-    romajiToHiragana["SHA"] = "しゃ";
-    romajiToHiragana["SHU"] = "しゅ";
-    romajiToHiragana["SHO"] = "しょ";
-    
-    romajiToHiragana["JA"] = "じゃ";   // JA = じゃ
-    romajiToHiragana["JU"] = "じゅ";   // JU = じゅ  
-    romajiToHiragana["JO"] = "じょ";   // JO = じょ
-    romajiToHiragana["ZYA"] = "じゃ";  // Alternative
-    romajiToHiragana["ZYU"] = "じゅ";  // Alternative
-    romajiToHiragana["ZYO"] = "じょ";  // Alternative
-    
-    romajiToHiragana["CHA"] = "ちゃ";
-    romajiToHiragana["CHU"] = "ちゅ";
-    romajiToHiragana["CHO"] = "ちょ";
-    
-    romajiToHiragana["NYA"] = "にゃ";
-    romajiToHiragana["NYU"] = "にゅ";
-    romajiToHiragana["NYO"] = "にょ";
-    
-    romajiToHiragana["HYA"] = "ひゃ";
-    romajiToHiragana["HYU"] = "ひゅ";
-    romajiToHiragana["HYO"] = "ひょ";
-    
-    romajiToHiragana["BYA"] = "びゃ";
-    romajiToHiragana["BYU"] = "びゅ";
-    romajiToHiragana["BYO"] = "びょ";
-    
-    romajiToHiragana["PYA"] = "ぴゃ";
-    romajiToHiragana["PYU"] = "ぴゅ";
-    romajiToHiragana["PYO"] = "ぴょ";
-    
-    romajiToHiragana["MYA"] = "みゃ";
-    romajiToHiragana["MYU"] = "みゅ";
-    romajiToHiragana["MYO"] = "みょ";
-    
-    romajiToHiragana["RYA"] = "りゃ";
-    romajiToHiragana["RYU"] = "りゅ";
-    romajiToHiragana["RYO"] = "りょ";
-}
-
-QString KanjiLearningWindow::convertRomajiToHiragana(const QString &romaji)
-{
-    QString result = "";
-    QString upperRomaji = romaji.toUpper();
-    
-    int i = 0;
-    while (i < upperRomaji.length()) {
-        bool found = false;
-        
-        // Try 4-character combinations first (for XTSU)
-        if (i + 4 <= upperRomaji.length()) {
-            QString four_char = upperRomaji.mid(i, 4);
-            if (romajiToHiragana.contains(four_char)) {
-                result += romajiToHiragana[four_char];
-                i += 4;
-                found = true;
-            }
-        }
-        
-        // Try 3-character combinations
-        if (!found && i + 3 <= upperRomaji.length()) {
-            QString three_char = upperRomaji.mid(i, 3);
-            if (romajiToHiragana.contains(three_char)) {
-                result += romajiToHiragana[three_char];
-                i += 3;
-                found = true;
-            }
-        }
-        
-        // Try 2-character combinations
-        if (!found && i + 2 <= upperRomaji.length()) {
-            QString two_char = upperRomaji.mid(i, 2);
-            if (romajiToHiragana.contains(two_char)) {
-                result += romajiToHiragana[two_char];
-                i += 2;
-                found = true;
-            }
-        }
-        
-        // If no match found, keep the original character
-        if (!found) {
-            result += romaji.mid(i, 1);
-            i += 1;
-        }
-    }
-    
-    return result;
 }
 
 void KanjiLearningWindow::onAnswerTextChanged(const QString &text)
@@ -529,7 +322,7 @@ void KanjiLearningWindow::onAnswerTextChanged(const QString &text)
     }
     
     if (hasUppercase) {
-        QString converted = convertRomajiToHiragana(text);
+        QString converted = ::convertRomajiToHiragana(text);
         if (converted != text) {
             int cursorPos = answerLineEdit->cursorPosition();
             isConverting = true;
@@ -587,6 +380,7 @@ void KanjiLearningWindow::onStartQuiz()
 {
     currentQuizIndex = 0;
     quizResults.clear();
+    processedKanjiIds.clear(); // Clear tracking for review mode
     for (int i = 0; i < studyKanji.size() * 2; ++i) {
         quizResults.append(false);
     }
@@ -640,7 +434,7 @@ void KanjiLearningWindow::startNextQuizQuestion()
     answerLineEdit->setFocus();
 }
 
-void KanjiLearningWindow::onSubmitAnswer()
+void KanjiLearningWindow::onAnswerSubmitted()
 {
     QString userAnswer = answerLineEdit->text().trimmed();
     if (userAnswer.isEmpty()) {
@@ -670,7 +464,11 @@ void KanjiLearningWindow::checkQuizAnswer()
     }
     
     if (isCorrect) {
-        quizResults[currentQuizIndex] = true;
+        // Ensure we don't go out of bounds
+        if (currentQuizIndex < quizResults.size()) {
+            quizResults[currentQuizIndex] = true;
+        }
+        
         showFeedbackOverlay("Correct!", "#28a745");
         
         // For review mode, check if both meaning and reading are now correct for this kanji
@@ -682,13 +480,24 @@ void KanjiLearningWindow::checkQuizAnswer()
             // Check if both questions for this kanji are answered correctly
             if (meaningIndex < quizResults.size() && readingIndex < quizResults.size() &&
                 quizResults[meaningIndex] && quizResults[readingIndex]) {
-                // Both meaning and reading correct - advance SRS level
+                
+                // Check if we haven't already processed this kanji
                 const KanjiCard &kanji = studyKanji[kanjiIndex];
-                database->updateKanjiProgress(kanji.id, true, 1);
+                
+                // Only process if we haven't already leveled up this kanji
+                if (!processedKanjiIds.contains(kanji.id)) {
+                    // Level up the kanji and update next review time
+                    qDebug() << "Both meaning and reading correct for kanji:" << kanji.kanji << "- Leveling up!";
+                    database->updateKanjiProgress(kanji.id, true, 1);
+                    
+                    // Mark this kanji as processed
+                    processedKanjiIds.insert(kanji.id);
+                }
             }
         }
         
-        // Disable input temporarily and automatically proceed
+        // Hide retry button and disable input temporarily, then automatically proceed
+        retryButton->setVisible(false);
         answerLineEdit->setEnabled(false);
         
         QTimer::singleShot(800, [this]() {
@@ -702,6 +511,7 @@ void KanjiLearningWindow::checkQuizAnswer()
         if (currentMode == Mode::Review) {
             int kanjiIndex = currentQuizIndex / 2;
             const KanjiCard &kanji = studyKanji[kanjiIndex];
+            qDebug() << "Wrong answer for kanji:" << kanji.kanji << "- Lowering level!";
             database->updateKanjiProgress(kanji.id, false, 1);
         }
         
@@ -754,6 +564,10 @@ void KanjiLearningWindow::showFeedbackOverlay(const QString &message, const QStr
 
 void KanjiLearningWindow::onRetryQuestion()
 {
+    // Hide the retry button
+    retryButton->setVisible(false);
+    
+    // Clear and re-enable the answer input
     answerLineEdit->clear();
     answerLineEdit->setEnabled(true);
     answerLineEdit->setFocus();
